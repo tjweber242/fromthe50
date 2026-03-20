@@ -2,9 +2,8 @@ name: Update Latest YouTube Video
  
 on:
   schedule:
-    # Runs every 6 hours
     - cron: '0 */6 * * *'
-  workflow_dispatch: # allows manual trigger from GitHub UI
+  workflow_dispatch:
  
 jobs:
   update:
@@ -16,47 +15,60 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
  
-      - name: Fetch latest video ID from YouTube RSS
+      - name: Fetch latest video ID
         id: getvideo
         run: |
-          CHANNEL_ID="UCb1u9oY1BZzAfOoETyDZCgg"
-          RSS_URL="https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}"
-          echo "Fetching: $RSS_URL"
-          
-          # Fetch RSS (no CORS issues server-side)
-          RSS=$(curl -s "$RSS_URL")
-          echo "RSS fetched, length: ${#RSS}"
-          
-          # Try multiple extraction patterns to handle namespace variations
-          VIDEO_ID=$(echo "$RSS" | grep -oP '(?<=<yt:videoId>)[^<]+' | head -1)
+          python3 << 'PYEOF'
+          import urllib.request
+          import re
+          import os
  
-          if [ -z "$VIDEO_ID" ]; then
-            VIDEO_ID=$(echo "$RSS" | grep -oP 'watch\?v=\K[A-Za-z0-9_-]{11}' | head -1)
-          fi
+          channel_id = "UCb1u9oY1BZzAfOoETyDZCgg"
  
-          if [ -z "$VIDEO_ID" ]; then
-            VIDEO_ID=$(echo "$RSS" | grep -oP '(?<=videos/)[A-Za-z0-9_-]{11}' | head -1)
-          fi
-          echo "Latest video ID: $VIDEO_ID"
-          
-          if [ -z "$VIDEO_ID" ]; then
-            echo "ERROR: Could not extract video ID"
-            echo "RSS preview:"
-            echo "$RSS" | head -30
-            exit 1
-          fi
-          
-          echo "video_id=$VIDEO_ID" >> $GITHUB_OUTPUT
+          # Try RSS feed first
+          urls = [
+            f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}",
+            f"https://www.youtube.com/channel/{channel_id}/videos",
+          ]
+ 
+          video_id = None
+          for url in urls:
+            try:
+              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+              content = urllib.request.urlopen(req, timeout=10).read().decode("utf-8")
+              print(f"Fetched {url}, length: {len(content)}")
+ 
+              # Try multiple patterns
+              patterns = [
+                r'<yt:videoId>([A-Za-z0-9_-]{11})</yt:videoId>',
+                r'watch\?v=([A-Za-z0-9_-]{11})',
+                r'/videos/([A-Za-z0-9_-]{11})',
+              ]
+              for pat in patterns:
+                m = re.search(pat, content)
+                if m:
+                  video_id = m.group(1)
+                  print(f"Found video ID: {video_id}")
+                  break
+              if video_id:
+                break
+            except Exception as e:
+              print(f"Error fetching {url}: {e}")
+ 
+          if not video_id:
+            print("ERROR: Could not find video ID")
+            exit(1)
+ 
+          # Write to GitHub output
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"video_id={video_id}\n")
+          PYEOF
  
       - name: Update index.html with new video ID
         run: |
           VIDEO_ID="${{ steps.getvideo.outputs.video_id }}"
-          echo "Updating index.html with video ID: $VIDEO_ID"
-          
-          # Replace the video ID in the embed URL
+          echo "Updating with video ID: $VIDEO_ID"
           sed -i "s|youtube.com/embed/[A-Za-z0-9_-]*|youtube.com/embed/${VIDEO_ID}|g" index.html
-          
-          echo "Done. Verifying..."
           grep "youtube.com/embed" index.html
  
       - name: Commit and push if changed
@@ -65,8 +77,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add index.html
           if git diff --staged --quiet; then
-            echo "No changes — video is already up to date."
+            echo "No changes — already up to date."
           else
             git commit -m "Auto-update: latest YouTube episode"
             git push
           fi
+ 
