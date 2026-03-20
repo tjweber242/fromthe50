@@ -1,0 +1,62 @@
+name: Update Latest YouTube Video
+ 
+on:
+  schedule:
+    # Runs every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # allows manual trigger from GitHub UI
+ 
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+ 
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+ 
+      - name: Fetch latest video ID from YouTube RSS
+        id: getvideo
+        run: |
+          CHANNEL_ID="UCb1u9oY1BZzAfOoETyDZCgg"
+          RSS_URL="https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}"
+          echo "Fetching: $RSS_URL"
+          
+          # Fetch RSS (no CORS issues server-side)
+          RSS=$(curl -s "$RSS_URL")
+          echo "RSS fetched, length: ${#RSS}"
+          
+          # Extract first video ID
+          VIDEO_ID=$(echo "$RSS" | grep -o '<yt:videoId>[^<]*</yt:videoId>' | head -1 | sed 's/<[^>]*>//g')
+          echo "Latest video ID: $VIDEO_ID"
+          
+          if [ -z "$VIDEO_ID" ]; then
+            echo "ERROR: Could not extract video ID"
+            exit 1
+          fi
+          
+          echo "video_id=$VIDEO_ID" >> $GITHUB_OUTPUT
+ 
+      - name: Update index.html with new video ID
+        run: |
+          VIDEO_ID="${{ steps.getvideo.outputs.video_id }}"
+          echo "Updating index.html with video ID: $VIDEO_ID"
+          
+          # Replace the video ID in the embed URL
+          sed -i "s|youtube.com/embed/[A-Za-z0-9_-]*|youtube.com/embed/${VIDEO_ID}|g" index.html
+          
+          echo "Done. Verifying..."
+          grep "youtube.com/embed" index.html
+ 
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          if git diff --staged --quiet; then
+            echo "No changes — video is already up to date."
+          else
+            git commit -m "Auto-update: latest YouTube episode"
+            git push
+          fi
