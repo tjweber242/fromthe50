@@ -23,7 +23,7 @@ jobs:
           import re
           import os
  
-          channel_id = "UCb1u9oY1BZzAfOoETyDZCgg"
+         channel_id = "UCeF1IGA4WIuuxrxGI0xxuTA"
  
           # Try RSS feed first
           urls = [
