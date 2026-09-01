@@ -1,31 +1,47 @@
-import urllib.request, re, os, sys
+import os
+import sys
+import urllib.request
+from xml.etree import ElementTree as ET
 
-channel_id = "UCeF1IGA4WIuuxrxGI0xxuTA"
-urls = [
-    f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}",
-    f"https://www.youtube.com/channel/{channel_id}/videos",
-]
+# ---- EDIT THIS LINE ----
+PLAYLIST_ID = "PLRs63yHQKUEjUGqx3CulPenjUUti5J96t"
+# ------------------------
 
-video_id = None
-for url in urls:
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        content = urllib.request.urlopen(req, timeout=10).read().decode("utf-8")
-        print(f"Fetched {url}, length: {len(content)}")
-        for pat in [r'<yt:videoId>([A-Za-z0-9_-]{11})</yt:videoId>', r'watch\?v=([A-Za-z0-9_-]{11})']:
-            m = re.search(pat, content)
-            if m:
-                video_id = m.group(1)
-                print(f"Found video ID: {video_id}")
-                break
-        if video_id:
-            break
-    except Exception as e:
-        print(f"Error: {e}")
+FEED = f"https://www.youtube.com/feeds/videos.xml?playlist_id={PLAYLIST_ID}"
+NS = {
+    "atom": "http://www.w3.org/2005/Atom",
+    "yt": "http://www.youtube.com/xml/schemas/2015",
+}
 
-if not video_id:
-    print("ERROR: Could not find video ID")
+req = urllib.request.Request(FEED, headers={"User-Agent": "Mozilla/5.0"})
+try:
+    xml = urllib.request.urlopen(req, timeout=15).read()
+except Exception as e:
+    print(f"ERROR fetching feed: {e}")
     sys.exit(1)
+
+root = ET.fromstring(xml)
+
+entries = []
+for entry in root.findall("atom:entry", NS):
+    vid = entry.find("yt:videoId", NS)
+    published = entry.find("atom:published", NS)
+    title = entry.find("atom:title", NS)
+    if vid is not None and published is not None:
+        entries.append(
+            (published.text, vid.text, title.text if title is not None else "")
+        )
+
+if not entries:
+    print("ERROR: no videos found in playlist feed. Check the playlist ID and that the playlist is public.")
+    sys.exit(1)
+
+# Newest by publish date, regardless of how the playlist itself is ordered
+entries.sort(reverse=True)
+published, video_id, title = entries[0]
+
+print(f"Found {len(entries)} entries in feed.")
+print(f"Latest: {video_id} — {title} (published {published})")
 
 with open(os.environ["GITHUB_OUTPUT"], "a") as f:
     f.write(f"video_id={video_id}\n")
